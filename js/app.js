@@ -327,8 +327,11 @@
     map = null; // 容器重建,需重新初始化
   }
 
-  function openGoogleMaps(url) {
-    window.open(url, '_blank', 'noopener');
+  function openGoogleMaps(url, latlng) {
+    const w = window.open(url, '_blank');
+    if (w) { w.opener = null; return; }
+    // 彈出視窗被擋時(或在部分嵌入環境),改顯示可點擊的連結
+    L.popup().setLatLng(latlng).setContent(`<a href="${esc(url)}" target="_blank" rel="noopener">在 Google 地圖開啟</a>`).openOn(map);
   }
 
   function drawMap() {
@@ -349,14 +352,14 @@
       pts.forEach((p, n) => {
         const icon = L.divIcon({ className: 'pin', html: `<span style="background:${dayColor(i)}">${n + 1}</span>`, iconSize: [26, 26], iconAnchor: [13, 13] });
         L.marker([+p.lat, +p.lng], { icon, title: p.title, alt: p.title })
-          .on('click', () => openGoogleMaps(Exporters.googlePlaceUrl(p)))
+          .on('click', (e) => openGoogleMaps(Exporters.googlePlaceUrl(p), e.latlng))
           .addTo(layer);
         bounds.push([+p.lat, +p.lng]);
       });
     });
     $('#mapLegend').innerHTML = legend.join('') || '<span class="muted">尚無含座標的項目。</span>';
     if (bounds.length) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
-    map.on('click', (e) => openGoogleMaps(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`)}`));
+    map.on('click', (e) => openGoogleMaps(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`)}`, e.latlng));
     setTimeout(() => map && map.invalidateSize(), 0);
   }
 
