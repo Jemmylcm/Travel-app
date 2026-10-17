@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>旅程規劃</title>
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🧭 旅程規劃</h1>
+    <select id="tripSelect" aria-label="選擇旅程"></select>
+    <button data-action="new-trip">＋ 新旅程</button>
+    <button data-action="open-export" class="primary">匯出 / 備份</button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="itinerary">📅 行程</button>
+    <button role="tab" data-tab="map">🗺️ 地圖</button>
+    <button role="tab" data-tab="budget">💰 預算</button>
+    <button role="tab" data-tab="setup">⚙️ 設定與推薦</button>
+  </nav>
+
+  <main>
+    <div class="view" id="view-itinerary"></div>
+    <div class="view" id="view-map" hidden></div>
+    <div class="view" id="view-budget" hidden></div>
+    <div class="view" id="view-setup" hidden></div>
+  </main>
+
+  <dialog id="itemDialog">
+    <form id="itemForm" method="dialog">
+      <h2 id="itemDialogTitle">項目</h2>
+      <div class="grid2">
+        <label>時間 <input type="time" name="time" /></label>
+        <label>類型
+          <select name="type">
+            <option value="sight">📍 景點</option><option value="food">🍽️ 餐飲</option>
+            <option value="transport">🚆 交通</option><option value="lodging">🛏️ 住宿</option>
+            <option value="shop">🛍️ 購物</option><option value="other">📝 其他</option>
+          </select>
+        </label>
+      </div>
+      <label>名稱 <input name="title" required placeholder="如 清水寺(Enter 可搜尋地點)" /></label>
+      <label>地址 <input name="address" placeholder="選填" /></label>
+      <div class="row">
+        <button type="button" data-action="search-place">🔎 搜尋地點取得座標</button>
+        <small class="muted">使用 OpenStreetMap 搜尋(需網路)</small>
+      </div>
+      <div id="searchResults" class="results" aria-live="polite"></div>
+      <div class="grid2">
+        <label>緯度 <input name="lat" inputmode="decimal" placeholder="25.033964" /></label>
+        <label>經度 <input name="lng" inputmode="decimal" placeholder="121.564468" /></label>
+      </div>
+      <div class="grid2">
+        <label>預估費用 <input name="cost" type="number" min="0" step="any" /></label>
+        <label>備註 <input name="note" placeholder="預約號碼、營業時間…" /></label>
+      </div>
+      <div class="row end">
+        <button type="button" data-action="close-dialog">取消</button>
+        <button type="submit" class="primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="exportDialog">
+    <div class="dlg">
+      <h2>匯出 / 備份</h2>
+      <h3>PDF</h3>
+      <label class="inline"><input type="checkbox" id="optBudget" checked /> 包含預算摘要</label>
+      <label class="inline"><input type="checkbox" id="optTips" /> 包含全部交通/餐飲/住宿建議<br><small class="muted">未勾選時,只輸出你在行程頁已展開或有筆記的部分</small></label>
+      <button data-action="do-print" class="primary">產生 PDF(開啟列印 → 另存為 PDF)</button>
+
+      <h3>地圖資料</h3>
+      <button data-action="do-kml">下載 KML(匯入 Google 我的地圖)</button>
+      <p class="muted small">Google 我的地圖 → 建立新地圖 → 匯入。Apple 地圖不支援匯入檔案,請使用行程頁每日的「Apple 地圖」路線連結,或各項目旁的 A 連結。</p>
+
+      <h3>備份</h3>
+      <div class="row">
+        <button data-action="do-json">目前旅程 JSON</button>
+        <button data-action="do-json-all">全部旅程 JSON</button>
+      </div>
+      <label>匯入 JSON <input type="file" id="importFile" accept="application/json,.json" /></label>
+      <div class="row end"><button data-action="close-dialog">關閉</button></div>
+    </div>
+  </dialog>
+
+  <div id="printArea" aria-hidden="true"></div>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="js/planner.js"></script>
+  <script src="js/exporters.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
