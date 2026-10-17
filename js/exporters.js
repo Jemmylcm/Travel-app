@@ -78,7 +78,21 @@
 `;
   }
 
-  function download(filename, text, mime) {
+  // Artifact 內只能透過 downloads 能力存檔,且只允許少數副檔名(不含 kml)
+  const SAVEABLE = /\.(json|txt|md|csv|html|pdf)$/i;
+
+  async function getDownloads() {
+    try { return window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (e) { return null; }
+  }
+
+  /** 回傳 {ok, reason}:reason 為 'format'(此環境不支援該格式)、'declined' 或 'error' */
+  async function download(filename, text, mime) {
+    const dl = await getDownloads();
+    if (dl) {
+      if (!SAVEABLE.test(filename)) return { ok: false, reason: 'format' };
+      try { await dl.save({ filename, data: text }); return { ok: true }; }
+      catch (e) { return { ok: false, reason: e && e.code === 'declined' ? 'declined' : 'error' }; }
+    }
     const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -87,6 +101,7 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    return { ok: true };
   }
 
   global.Exporters = { hasCoord, googlePlaceUrl, applePlaceUrl, googleRouteUrl, appleRouteUrl, toKml, download };

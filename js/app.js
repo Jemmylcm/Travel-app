@@ -25,6 +25,20 @@
   const money = (n) => (Math.round((+n || 0) * 100) / 100).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
+  // 頁內對話框:嵌入環境不會顯示 alert()/confirm(),所以自己做
+  function askDialog(text, withCancel) {
+    return new Promise((resolve) => {
+      const d = $('#msgDialog');
+      $('#msgText').textContent = text;
+      $('#msgCancel').hidden = !withCancel;
+      d.returnValue = '';
+      d.addEventListener('close', () => resolve(d.returnValue === 'ok'), { once: true });
+      d.showModal();
+    });
+  }
+  const confirmBox = (text) => askDialog(text, true);
+  const notice = (text) => askDialog(text, false);
+
   /* ---------- 資料 ---------- */
   function newTrip(over) {
     const start = fmtISO(new Date());
@@ -68,7 +82,7 @@
   }
 
   let data = load();
-  const ui = { tab: 'itinerary', mapDay: 'all', editingExpense: null, exportOpts: { budget: true, allTips: false } };
+  const ui = { tab: 'itinerary', mapDay: 'all', editingExpense: null, aiReply: '', geocoding: false, exportOpts: { budget: true, allTips: false } };
 
   function load() {
     try {
@@ -87,7 +101,7 @@
   function save() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
     catch (e) {
-      if (!saveWarned) { saveWarned = true; alert('無法儲存到瀏覽器(可能是無痕模式或空間已滿)。請使用「匯出 JSON」備份。'); }
+      if (!saveWarned) { saveWarned = true; notice('無法儲存到瀏覽器(可能是無痕模式或空間已滿)。請使用「匯出 JSON」備份。'); }
     }
   }
 
@@ -156,6 +170,7 @@
           <button data-action="gen-all">✨ 依設定產生推薦行程</button>
           <button data-action="expand-all">全部展開建議</button>
           <button data-action="collapse-all">全部收合</button>
+          <button data-action="geocode">📍 補齊座標</button>
         </div>
       </div>`;
     el.innerHTML = head + t.days.map((day, i) => renderDay(t, day, i)).join('');
@@ -205,7 +220,7 @@
         <span class="grip" title="拖曳排序">⋮⋮</span>
         <span class="time">${esc(it.time) || '--:--'}</span>
         <div class="main">
-          <div class="title">${icon} ${esc(it.title) || '(未命名)'}${it.suggested ? ' <span class="tag">建議</span>' : ''}</div>
+          <div class="title">${icon} ${esc(it.title) || '(未命名)'}${it.suggested ? ' <span class="tag">建議</span>' : ''}${it.ai ? ' <span class="tag">Claude 推薦</span>' : ''}</div>
           <div class="meta">
             ${it.address ? `<span>${esc(it.address)}</span>` : ''}
             ${it.cost ? `<span>預估 ${money(it.cost)}</span>` : ''}
@@ -267,7 +282,7 @@
       cost: num(f.cost.value), note: f.note.value.trim(),
       lat: Number.isFinite(lat) && lat >= -90 && lat <= 90 ? lat : null,
       lng: Number.isFinite(lng) && lng >= -180 && lng <= 180 ? lng : null,
-      suggested: false,
+      suggested: false, ai: false,
     };
     if (patch.lat == null || patch.lng == null) { patch.lat = null; patch.lng = null; }
     if (editing.id) Object.assign(findItem(t, editing.id).item, patch);
@@ -297,10 +312,10 @@
     save(); render();
   }
 
-  function generateAll() {
+  async function generateAll() {
     const t = trip();
     const hasItems = t.days.some((d) => d.items.length);
-    if (hasItems && !confirm('這會覆蓋所有天的現有項目,確定要重新產生嗎?\n(不想覆蓋可到「旅程設定」按「只補齊空白的天」)')) return;
+    if (hasItems && !(await confirmBox('這會覆蓋所有天的現有項目,確定要重新產生嗎?\n(不想覆蓋可到「設定與推薦」按「只補齊空白的天」)'))) return;
     applyPlan(t, false);
   }
   function applyPlan(t, onlyEmpty) {
@@ -309,6 +324,84 @@
       day.items = Planner.suggestDay(t, i, t.days.length).map((s) => Object.assign({ id: uid(), address: '', cost: 0, lat: null, lng: null, suggested: true }, s));
     });
     save(); ui.tab = 'itinerary'; render();
+  }
+
+  /* ---------- 以 Claude 網路搜尋推薦 ---------- */
+  async function copyPrompt() {
+    const t = trip();
+    const text = Planner.buildPrompt(t, t.days.map((_, i) => dayDate(t, i)));
+    const ta = $('#aiPrompt');
+    ta.hidden = false; ta.value = text;
+    try {
+      await navigator.clipboard.writeText(text);
+      await notice('已複製提示詞。請貼到 Claude(請開啟網路搜尋),再把回覆貼回來匯入。');
+    } catch (e) {
+      await notice('無法自動複製,已幫你選取提示詞,請按 Ctrl+C(Mac:⌘C)複製。');
+      ta.focus(); ta.select();
+    }
+  }
+
+  async function importAi() {
+    const t = trip();
+    let plan;
+    try { plan = Planner.parsePlan(ui.aiReply, t.days.length); }
+    catch (e) { await notice('匯入失敗:' + e.message); return; }
+    const total = plan.days.reduce((n, d) => n + d.length, 0);
+    if (!total) { await notice('回覆中沒有可用的項目。'); return; }
+    const overwrite = plan.days.some((items, i) => items.length && t.days[i].items.length);
+    if (overwrite && !(await confirmBox('回覆內容會覆蓋對應那幾天的現有項目,確定匯入嗎?'))) return;
+    plan.days.forEach((items, i) => {
+      if (items.length) t.days[i].items = items.map((it) => Object.assign({ id: uid(), ai: true }, it));
+    });
+    const noGeo = plan.days.flat().filter((it) => !Exporters.hasCoord(it)).length;
+    ui.aiReply = ''; ui.tab = 'itinerary'; save(); render();
+    await notice([`已匯入 ${total} 個項目。`,
+      noGeo ? `其中 ${noGeo} 個沒有座標,可在行程頁按「補齊座標」(地圖與路線連結需要座標)。` : '',
+      '營業時間與價格請再自行確認。', ...plan.warnings].filter(Boolean).join('\n'));
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function nominatim(q) {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=zh-TW&q=${encodeURIComponent(q)}`);
+    if (!res.ok) throw new Error(res.status);
+    const list = await res.json();
+    return list[0] || null;
+  }
+
+  // 逐筆搜尋缺少座標的項目(Nominatim 規定每秒最多 1 次請求)
+  async function geocodeMissing(btn) {
+    if (ui.geocoding) return;
+    const t = trip();
+    const targets = t.days.flatMap((d) => d.items).filter((it) => !Exporters.hasCoord(it) && (it.title || it.address));
+    if (!targets.length) { await notice('所有項目都已經有座標。'); return; }
+    ui.geocoding = true;
+    const label = btn.textContent;
+    let ok = 0, miss = 0, netFail = false;
+    try {
+      for (let k = 0; k < targets.length; k++) {
+        btn.textContent = `搜尋座標 ${k + 1}/${targets.length}…`;
+        const it = targets[k];
+        const queries = [];
+        if (it.address) queries.push(it.address);
+        queries.push([it.title, t.destination].filter(Boolean).join(' '));
+        let hit = null;
+        for (const q of queries) {
+          if (k || q !== queries[0]) await sleep(1100);
+          hit = await nominatim(q);
+          if (hit) break;
+        }
+        if (hit) { it.lat = +(+hit.lat).toFixed(6); it.lng = +(+hit.lon).toFixed(6); ok++; } else miss++;
+      }
+    } catch (e) {
+      netFail = true;
+    } finally {
+      ui.geocoding = false;
+      btn.textContent = label;
+      save(); render();
+    }
+    await notice([`成功 ${ok} 個,找不到 ${miss} 個。`,
+      netFail ? '搜尋中斷(需要網路,部分嵌入環境會擋住這項功能)。已完成的會保留。' : '',
+      ok ? '座標來自地點搜尋,可能會有誤差,請到「地圖」確認位置。' : ''].filter(Boolean).join('\n'));
   }
 
   /* ---------- 畫面:地圖 ---------- */
@@ -456,6 +549,15 @@
         </div>
         <p class="muted small">推薦是依規則產生的「活動類型」骨架(如「午餐」「博物館」),不含具體店名;請點開項目填入實際地點並搜尋座標。</p>
 
+        <h3>🌐 用 Claude 搜尋當地景點與餐廳</h3>
+        <p class="muted small">上面的「產生推薦行程」只會給活動類型。要推薦真實的景點與餐廳,需要上網搜尋:本網站不能直接連網搜尋,請複製提示詞,貼到 Claude(開啟網路搜尋),再把回覆貼回下方匯入。</p>
+        <div class="row"><button type="button" data-action="copy-prompt">📋 複製提示詞</button></div>
+        <textarea id="aiPrompt" rows="8" readonly hidden aria-label="提示詞"></textarea>
+        <label>貼上 Claude 的回覆
+          <textarea id="aiReply" rows="6" placeholder='{"days":[{"items":[…]}]}' data-change="ai-draft">${esc(ui.aiReply)}</textarea>
+        </label>
+        <div class="row"><button type="button" class="primary" data-action="import-ai">匯入到行程</button></div>
+
         <h3>危險區</h3>
         <button type="button" class="danger" data-action="del-trip">刪除這趟旅程</button>
       </form>`;
@@ -498,6 +600,13 @@
   }
   window.addEventListener('beforeprint', buildPrint);
 
+  async function reportDownload(r) {
+    if (r.ok || r.reason === 'declined') return;
+    await notice(r.reason === 'format'
+      ? '這個環境只允許下載少數檔案格式,無法下載 KML。請改用 GitHub Pages 或本機開啟的版本。'
+      : '下載失敗,請再試一次。');
+  }
+
   /* ---------- 事件 ---------- */
   document.addEventListener('click', async (ev) => {
     const b = ev.target.closest('[data-action]');
@@ -510,16 +619,26 @@
       }
       case 'open-export': $('#exportDialog').showModal(); break;
       case 'do-print': $('#exportDialog').close(); window.print(); break;
-      case 'do-kml': Exporters.download(`${t.name || 'trip'}.kml`, Exporters.toKml(t, dayLabel(t)), 'application/vnd.google-earth.kml+xml'); break;
-      case 'do-json': Exporters.download(`${t.name || 'trip'}.json`, JSON.stringify(t, null, 2), 'application/json'); break;
-      case 'do-json-all': Exporters.download('travel-planner-backup.json', JSON.stringify(data, null, 2), 'application/json'); break;
+      case 'do-kml': reportDownload(await Exporters.download(`${t.name || 'trip'}.kml`, Exporters.toKml(t, dayLabel(t)), 'application/vnd.google-earth.kml+xml')); break;
+      case 'do-json': reportDownload(await Exporters.download(`${t.name || 'trip'}.json`, JSON.stringify(t, null, 2), 'application/json')); break;
+      case 'do-json-all': reportDownload(await Exporters.download('travel-planner-backup.json', JSON.stringify(data, null, 2), 'application/json')); break;
+      case 'copy-prompt': copyPrompt(); break;
+      case 'import-ai': importAi(); break;
+      case 'geocode': geocodeMissing(b); break;
       case 'close-dialog': b.closest('dialog').close(); break;
       case 'toggle-sec': { const day = t.days[d]; day.show[b.dataset.sec] = !day.show[b.dataset.sec]; save(); render(); break; }
       case 'expand-all': t.days.forEach((day) => SECTIONS.forEach(([k]) => (day.show[k] = true))); save(); render(); break;
       case 'collapse-all': t.days.forEach((day) => SECTIONS.forEach(([k]) => (day.show[k] = false))); save(); render(); break;
       case 'add-item': openItemDialog(d, null); break;
       case 'edit-item': openItemDialog(0, id); break;
-      case 'del-item': { const f = findItem(t, id); if (f && confirm(`刪除「${f.item.title || '此項目'}」?`)) { t.days[f.d].items.splice(f.i, 1); save(); render(); } break; }
+      case 'del-item': {
+        const f = findItem(t, id);
+        if (f && await confirmBox(`刪除「${f.item.title || '此項目'}」?`)) {
+          const g = findItem(t, id);
+          if (g) { t.days[g.d].items.splice(g.i, 1); save(); render(); }
+        }
+        break;
+      }
       case 'up': stepItem(id, -1); break;
       case 'down': stepItem(id, 1); break;
       case 'sort-day': t.days[d].items.sort((x, y) => (x.time || '99:99').localeCompare(y.time || '99:99')); save(); render(); break;
@@ -536,9 +655,9 @@
       }
       case 'edit-exp': ui.editingExpense = id; render(); break;
       case 'cancel-exp': ui.editingExpense = null; render(); break;
-      case 'del-exp': if (confirm('刪除這筆花費?')) { t.expenses = t.expenses.filter((e) => e.id !== id); save(); render(); } break;
+      case 'del-exp': if (await confirmBox('刪除這筆花費?')) { t.expenses = t.expenses.filter((e) => e.id !== id); save(); render(); } break;
       case 'del-trip':
-        if (confirm(`確定刪除「${t.name}」?此動作無法復原(建議先匯出 JSON)。`)) {
+        if (await confirmBox(`確定刪除「${t.name}」?此動作無法復原(建議先匯出 JSON)。`)) {
           data.trips = data.trips.filter((x) => x.id !== t.id);
           if (!data.trips.length) data.trips.push(normalizeTrip(newTrip()));
           data.currentId = data.trips[0].id; ui.tab = 'itinerary'; save(); render();
@@ -551,7 +670,7 @@
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => { ui.tab = b.dataset.tab; render(); }));
   $('#tripSelect').addEventListener('change', (e) => { data.currentId = e.target.value; save(); render(); });
 
-  document.addEventListener('change', (ev) => {
+  document.addEventListener('change', async (ev) => {
     const el = ev.target, kind = el.dataset.change, t = trip();
     if (!kind) return;
     switch (kind) {
@@ -565,6 +684,7 @@
         if (c && c !== t.baseCurrency) { if (!(c in t.rates)) t.rates[c] = 0; save(); render(); }
         return;
       }
+      case 'ai-draft': ui.aiReply = el.value; return;
       case 'member': t.members[el.dataset.k] = Math.max(0, Math.floor(num(el.value))); save(); return;
       case 'style': {
         const k = el.dataset.k;
@@ -580,9 +700,9 @@
           if (!t.startDate) t.startDate = fmtISO(new Date());
           if (k === 'startDate' && t.endDate < t.startDate) t.endDate = t.startDate;
           if (k === 'endDate' && t.endDate < t.startDate) t.endDate = t.startDate;
-          if (diffDays(t.startDate, t.endDate) + 1 > 60) { t.endDate = addDays(t.startDate, 59); alert('最多支援 60 天'); }
+          if (diffDays(t.startDate, t.endDate) + 1 > 60) { t.endDate = addDays(t.startDate, 59); await notice('最多支援 60 天'); }
           const lost = t.days.slice(diffDays(t.startDate, t.endDate) + 1).some((d) => d.items.length);
-          if (lost && !confirm('縮短天數會刪除後面幾天已有的項目,確定嗎?')) { t.endDate = addDays(t.startDate, t.days.length - 1); }
+          if (lost && !(await confirmBox('縮短天數會刪除後面幾天已有的項目,確定嗎?'))) { t.endDate = addDays(t.startDate, t.days.length - 1); }
           syncDays(t);
         }
         save(); if (k === 'startDate' || k === 'endDate') render(); else renderHeader(); return;
@@ -624,9 +744,9 @@
       const added = list.map((x) => normalizeTrip(Object.assign({}, x, { id: uid() })));
       data.trips.push(...added); data.currentId = added[0].id;
       save(); $('#exportDialog').close(); render();
-      alert(`已匯入 ${added.length} 趟旅程。`);
+      await notice(`已匯入 ${added.length} 趟旅程。`);
     } catch (e) {
-      alert('匯入失敗:檔案不是有效的旅程 JSON。');
+      await notice('匯入失敗:檔案不是有效的旅程 JSON。');
     }
   });
 

@@ -208,5 +208,81 @@
     return { transport, food, lodging };
   }
 
-  global.Planner = { STYLES, TRANSPORTS, PACES, suggestDay, tipsFor, counts };
+  /* ---------- 以 Claude 網路搜尋推薦:提示詞與回覆解析 ---------- */
+  const ITEM_TYPES = ['sight', 'food', 'transport', 'lodging', 'shop', 'other'];
+  const PER_DAY = { relaxed: 4, normal: 5, packed: 7 };
+
+  /** 產生要貼給 Claude 的提示詞(請它先上網搜尋,再輸出固定格式的 JSON) */
+  function buildPrompt(trip, dayDates) {
+    const c = counts(trip);
+    const n = trip.days.length;
+    const cur = trip.baseCurrency || 'TWD';
+    const styles = (trip.styles || []).map((s) => STYLES[s]).filter(Boolean).join('、') || '不限';
+    const dates = (dayDates || []).map((d, i) => `第 ${i + 1} 天 ${d}`).join(';');
+    return `請先使用網路搜尋,查詢最新資料,再為我規劃旅程。只推薦真實存在、目前仍在營業的景點與餐廳,不要編造。
+
+【旅程】
+- 目的地:${trip.destination || '(請填寫目的地)'}
+- 日期:${trip.startDate} ~ ${trip.endDate},共 ${n} 天(${dates})
+- 成員:成人 ${c.adults} 人、孩童 ${c.children} 人、長輩 ${c.seniors} 人
+- 旅遊風格:${styles}
+- 交通方式:${TRANSPORTS[trip.transport] || '不限'}
+- 行程步調:${PACES[trip.pace] || '適中'}(每天約 ${PER_DAY[trip.pace] || 5} 個項目)
+- 預算幣別:${cur}
+
+【規劃要求】
+1. 每天包含午餐與晚餐;同一天的景點在地理上相近、動線順暢,並考慮交通方式(例如大眾運輸要注意班次與轉乘)。
+2. 有孩童要安排午休與適合的地點;有長輩要少走路、少階梯。
+3. 每個項目寫完整地址,並在 note 簡述推薦理由與注意事項(營業時間、公休日、是否需預約、門票)。查不到或不確定的資訊請標明「需再確認」,不要猜。
+4. lat、lng 只有在你確定時才填,否則填 null。
+5. cost 為預估費用(數字,單位 ${cur}),不確定填 0。
+6. source 填你參考的網址(可省略)。
+
+【輸出格式】
+只輸出一個 JSON 程式碼區塊,不要其他說明文字。days 必須剛好 ${n} 個,依序對應第 1 天到第 ${n} 天:
+{"days":[{"items":[{"time":"09:00","type":"sight","title":"名稱","address":"完整地址","note":"說明","cost":0,"lat":null,"lng":null,"source":"網址"}]}]}
+type 只能是 sight、food、transport、lodging、shop、other 其中之一。`;
+  }
+
+  function cleanItem(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const str = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+    const title = str(raw.title, 120);
+    if (!title) return null;
+    const m = String(raw.time || '').match(/^(\d{1,2}):(\d{2})/);
+    const time = m && +m[1] < 24 && +m[2] < 60 ? `${m[1].padStart(2, '0')}:${m[2]}` : '';
+    const lat = typeof raw.lat === 'number' ? raw.lat : parseFloat(raw.lat);
+    const lng = typeof raw.lng === 'number' ? raw.lng : parseFloat(raw.lng);
+    const okGeo = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+    const source = str(raw.source, 200);
+    const cost = parseFloat(raw.cost);
+    return {
+      time, title,
+      type: ITEM_TYPES.includes(raw.type) ? raw.type : 'other',
+      address: str(raw.address, 200),
+      note: [str(raw.note, 500), source ? `來源:${source}` : ''].filter(Boolean).join(' '),
+      cost: Number.isFinite(cost) && cost > 0 ? cost : 0,
+      lat: okGeo ? lat : null,
+      lng: okGeo ? lng : null,
+    };
+  }
+
+  /** 解析 Claude 的回覆(容許前後有說明文字或 ```json 程式碼區塊)。失敗時丟出可顯示給使用者的 Error */
+  function parsePlan(text, nDays) {
+    const s = String(text || '').trim();
+    if (!s) throw new Error('還沒有貼上 Claude 的回覆。');
+    const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const body = fence ? fence[1] : s;
+    const i = body.indexOf('{'), j = body.lastIndexOf('}');
+    if (i < 0 || j <= i) throw new Error('找不到 JSON 內容,請確認貼上的是完整的回覆。');
+    let obj;
+    try { obj = JSON.parse(body.slice(i, j + 1)); } catch (e) { throw new Error('JSON 格式有誤(可能回覆被截斷),請請 Claude 重新輸出完整內容。'); }
+    if (!obj || !Array.isArray(obj.days)) throw new Error('回覆缺少 days 陣列。');
+    const warnings = [];
+    if (obj.days.length !== nDays) warnings.push(`注意:回覆有 ${obj.days.length} 天,旅程是 ${nDays} 天,只匯入對得上的天數。`);
+    const days = obj.days.slice(0, nDays).map((d) => (Array.isArray(d && d.items) ? d.items : []).map(cleanItem).filter(Boolean));
+    return { days, warnings };
+  }
+
+  global.Planner = { STYLES, TRANSPORTS, PACES, suggestDay, tipsFor, counts, buildPrompt, parsePlan };
 })(window);

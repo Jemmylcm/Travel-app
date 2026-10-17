@@ -94,6 +94,8 @@ dialog h2 { margin: 0 0 8px; font-size: 17px; }
 dialog form > label, .dlg > label { margin: 8px 0; } dialog label input:not([type=checkbox]), dialog label select { width: 100%; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .dlg > button { display: block; margin: 6px 0; }
+#msgText { white-space: pre-line; margin: 0 0 12px; }
+#aiPrompt { margin-top: 8px; font-size: 12px; }
 .results { display: grid; gap: 4px; max-height: 180px; overflow: auto; font-size: 13px; margin: 6px 0; }
 .result { text-align: left; }
 
