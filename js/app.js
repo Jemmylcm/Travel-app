@@ -320,11 +320,15 @@
           <option value="all">全部天數</option>
           ${t.days.map((_, i) => `<option value="${i}" ${String(ui.mapDay) === String(i) ? 'selected' : ''}>Day ${i + 1} · ${dayDate(t, i)}</option>`).join('')}
         </select></label>
-        <span class="muted small">點地圖空白處可直接新增地點;沒有座標的項目不會顯示。</span>
+        <span class="muted small">點選標記或地圖任一位置,會在新分頁開啟 Google 地圖;沒有座標的項目不會顯示。</span>
       </div>
       <div id="map" role="application" aria-label="旅程地圖"></div>
       <div id="mapLegend" class="legend"></div>`;
     map = null; // 容器重建,需重新初始化
+  }
+
+  function openGoogleMaps(url) {
+    window.open(url, '_blank', 'noopener');
   }
 
   function drawMap() {
@@ -344,23 +348,15 @@
       if (latlngs.length > 1) L.polyline(latlngs, { color: dayColor(i), weight: 3, opacity: 0.7, dashArray: '6 6' }).addTo(layer);
       pts.forEach((p, n) => {
         const icon = L.divIcon({ className: 'pin', html: `<span style="background:${dayColor(i)}">${n + 1}</span>`, iconSize: [26, 26], iconAnchor: [13, 13] });
-        const gp = Exporters.googlePlaceUrl(p), ap = Exporters.applePlaceUrl(p);
-        L.marker([+p.lat, +p.lng], { icon }).addTo(layer).bindPopup(
-          `<strong>${esc(p.title)}</strong><br>${esc(p.time)} ${esc(p.address)}<br><a href="${esc(gp)}" target="_blank" rel="noopener">Google</a> · <a href="${esc(ap)}" target="_blank" rel="noopener">Apple</a>`);
+        L.marker([+p.lat, +p.lng], { icon, title: p.title, alt: p.title })
+          .on('click', () => openGoogleMaps(Exporters.googlePlaceUrl(p)))
+          .addTo(layer);
         bounds.push([+p.lat, +p.lng]);
       });
     });
     $('#mapLegend').innerHTML = legend.join('') || '<span class="muted">尚無含座標的項目。</span>';
     if (bounds.length) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
-    map.on('click', (e) => {
-      const opts = t.days.map((_, i) => `<option value="${i}" ${ui.mapDay !== 'all' && +ui.mapDay === i ? 'selected' : ''}>Day ${i + 1}</option>`).join('');
-      L.popup().setLatLng(e.latlng).setContent(`
-        <div class="addpop">
-          <input id="popTitle" placeholder="地點名稱" />
-          <select id="popDay">${opts}</select>
-          <button type="button" data-action="pop-add" data-lat="${e.latlng.lat.toFixed(6)}" data-lng="${e.latlng.lng.toFixed(6)}">加入行程</button>
-        </div>`).openOn(map);
-    });
+    map.on('click', (e) => openGoogleMaps(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`)}`));
     setTimeout(() => map && map.invalidateSize(), 0);
   }
 
@@ -534,11 +530,6 @@
         if (!f.title.value) f.title.value = r.name || r.display_name.split(',')[0];
         $('#searchResults').innerHTML = `<span class="muted">已套用座標 ${f.lat.value}, ${f.lng.value}</span>`;
         break;
-      }
-      case 'pop-add': {
-        const title = ($('#popTitle').value || '').trim() || '新地點', day = +$('#popDay').value;
-        t.days[day].items.push({ id: uid(), time: '', type: 'sight', title, address: '', cost: 0, note: '', lat: +b.dataset.lat, lng: +b.dataset.lng });
-        save(); render(); break;
       }
       case 'edit-exp': ui.editingExpense = id; render(); break;
       case 'cancel-exp': ui.editingExpense = null; render(); break;
