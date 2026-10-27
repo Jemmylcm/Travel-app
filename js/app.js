@@ -214,7 +214,7 @@
 
   function renderItem(it, d, n, len) {
     const [icon, label] = TYPES[it.type] || TYPES.other;
-    const gp = Exporters.googlePlaceUrl(it), ap = Exporters.applePlaceUrl(it);
+    const ap = Exporters.applePlaceUrl(it);
     return `
       <li class="item" draggable="true" data-id="${it.id}">
         <span class="grip" title="拖曳排序">⋮⋮</span>
@@ -225,7 +225,6 @@
             ${it.address ? `<span>${esc(it.address)}</span>` : ''}
             ${it.cost ? `<span>預估 ${money(it.cost)}</span>` : ''}
             ${it.note ? `<span>${esc(it.note)}</span>` : ''}
-            ${gp ? `<a href="${esc(gp)}" target="_blank" rel="noopener">G</a>` : ''}
             ${ap ? `<a href="${esc(ap)}" target="_blank" rel="noopener">A</a>` : ''}
           </div>
         </div>
