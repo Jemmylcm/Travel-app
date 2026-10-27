@@ -46,6 +46,9 @@ main { padding: 12px 16px 48px; max-width: 980px; margin: 0 auto; }
 .day > header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
 .day h3 { margin: 0; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.daymove { display: flex; gap: 4px; align-items: center; }
+.daymove button { padding: 2px 8px; }
+.daymove select { padding: 3px 6px; font-size: 13px; }
 .chip { border-radius: 999px; padding: 3px 10px; font-size: 13px; }
 .chip[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
 .panel { background: var(--bg); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }

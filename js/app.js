@@ -199,6 +199,14 @@
         <header>
           <h3>Day ${i + 1} <span class="muted">${dayDate(t, i)}</span></h3>
           <div class="chips">${chips}</div>
+          <div class="daymove">
+            <button data-action="day-up" data-day="${i}" aria-label="整天上移(與前一天對調)" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button data-action="day-down" data-day="${i}" aria-label="整天下移(與後一天對調)" ${i === t.days.length - 1 ? 'disabled' : ''}>↓</button>
+            <select data-change="day-move" data-day="${i}" aria-label="整天移到指定的天">
+              <option value="">移到…</option>
+              ${t.days.map((_, k) => (k === i ? '' : `<option value="${k}">Day ${k + 1} · ${dayDate(t, k)}</option>`)).join('')}
+            </select>
+          </div>
         </header>
         ${panels}
         <ul class="items" data-day="${i}">
@@ -297,6 +305,17 @@
     if (idx < 0) idx = list.length;
     list.splice(idx, 0, item);
     save(); render();
+  }
+
+  // 整天搬移:該天的所有項目、筆記與展開狀態一起移動,日期依位置重新對應
+  function moveDay(from, to) {
+    const t = trip();
+    if (!(from >= 0 && from < t.days.length && to >= 0 && to < t.days.length) || from === to) return;
+    const [day] = t.days.splice(from, 1);
+    t.days.splice(to, 0, day);
+    save(); render();
+    const el = document.querySelectorAll('#view-itinerary .day')[to];
+    if (el) el.scrollIntoView({ block: 'nearest' });
   }
 
   function stepItem(id, dir) {
@@ -636,6 +655,8 @@
         }
         break;
       }
+      case 'day-up': moveDay(d, d - 1); break;
+      case 'day-down': moveDay(d, d + 1); break;
       case 'up': stepItem(id, -1); break;
       case 'down': stepItem(id, 1); break;
       case 'sort-day': t.days[d].items.sort((x, y) => (x.time || '99:99').localeCompare(y.time || '99:99')); save(); render(); break;
@@ -673,6 +694,7 @@
     switch (kind) {
       case 'day-note': t.days[+el.dataset.day].notes[el.dataset.sec] = el.value; save(); return;
       case 'map-day': ui.mapDay = el.value; render(); return;
+      case 'day-move': if (el.value !== '') moveDay(+el.dataset.day, +el.value); return;
       case 'budget-total': t.budget.total = num(el.value); save(); render(); return;
       case 'cat-budget': t.budget.cats[el.dataset.cat] = num(el.value); save(); return;
       case 'rate': t.rates[el.dataset.cur] = num(el.value); save(); render(); return;
